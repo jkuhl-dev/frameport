@@ -37,3 +37,6 @@ site/public/setup.sh
 /PRODUCT.md
 /DESIGN.md
 /.impeccable/
+
+# IDE project files
+.idea
