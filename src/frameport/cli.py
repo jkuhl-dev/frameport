@@ -10,6 +10,7 @@ Errors are one line on stderr; FRAMEPORT_DEBUG=1 shows the traceback.
     frameport build <pkg>|--all
     frameport frame discover | pair | info --frame steamos@frame.local
     frameport install <pkg> --frame steamos@frame.local [--apk-only]
+    frameport offline-install <pkg>|--all [--outdir <dir>]  # create offline install folder for the Frame
     frameport test <pkg> --frame ...             # headless launch + triage
     frameport session <pkg> [--apply]            # triage the last play session (crashes, fps, focus dips)
     frameport frame send <files> --dest videos   # copy files to the Frame (where every game sees them)
@@ -158,8 +159,12 @@ def _target(frame: Optional[str], password: Optional[str] = None, to: str = "fra
         from .targets.pc_revive import PcReviveTarget
 
         return PcReviveTarget()
+    if to == "offline":
+        from .targets.offline import OfflineTarget
+
+        return OfflineTarget()
     if to != "frame":
-        raise typer.BadParameter("--to must be 'frame' or 'pc'")
+        raise typer.BadParameter("--to must be 'frame', 'pc', or 'offline'")
     from .frame.connection import parse_target, saved_targets
     from .targets.frame_lepton import FrameLeptonTarget
 
@@ -623,6 +628,39 @@ def install(package: Optional[str] = typer.Argument(None), all_: bool = typer.Op
             shortcuts.append(pkg)
     if not no_library and shortcuts:
         target.add_to_library(shortcuts, printing_reporter(False))
+
+
+@app.command("offline-install")
+def offline_install(
+    package: Optional[str] = typer.Argument(None, help="package name, search term or path to APK/app bundle"),
+    all_: bool = typer.Option(False, "--all", help=ALL_HELP),
+    outdir: Optional[Path] = typer.Option(None, help="output directory where game folders are created"),
+    force: bool = typer.Option(False, help="rebuild even if the build is already current"),
+    no_art: bool = typer.Option(False, help="skip fetching artwork"),
+    move: bool = typer.Option(False, help="move data files instead of copying"),
+    verbose: bool = typer.Option(False, help="print every step"),
+):
+    """Create an offline install folder for the Steam Frame instead of installing over the network."""
+    from .targets.offline import OfflineTarget
+
+    out = (outdir or Path.cwd()).resolve()
+    target = OfflineTarget(outdir=out, move=move, fetch_art=not no_art)
+    rep = printing_reporter(verbose)
+
+    if package and not all_:
+        path_arg = Path(package)
+        if path_arg.is_file():
+            report = pipeline.ScanReport()
+            scanned = pipeline.add_path(path_arg, rep, only_new=False, report=report)
+            if scanned:
+                package = scanned[0]["package"]
+
+    pkgs = _pkgs(package, all_)
+    for pkg in pkgs:
+        if pipeline.missing_obb(library.game(pkg) or {}):
+            typer.echo(f"{pkg}: warning: " + pipeline.MISSING_OBB_NOTE.format(package=pkg), err=True)
+        result = pipeline.install_game(pkg, target, rep, force=force)
+        typer.echo(f"{pkg}: offline bundle created -> {result.get('path', out / pkg)}")
 
 
 @app.command()
